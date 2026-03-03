@@ -1,0 +1,86 @@
+#--- source.hlsl
+[[vk::binding(0, 0)]] vk::SampledTexture2D<float4> CombinedTex : register(s0);
+[[vk::binding(1, 0)]] RWBuffer<float4> Out : register(u0);
+
+[numthreads(1, 1, 1)]
+void main() {
+  Out[0] = CombinedTex.Load(int3(0, 0, 0));
+  Out[1] = CombinedTex.Load(int3(1, 0, 0));
+  Out[2] = CombinedTex.Load(int3(0, 1, 0));
+  Out[3] = CombinedTex.Load(int3(1, 1, 0));
+
+  Out[4] = CombinedTex.Load(int3(0, 0, 0), int2(1, 0));
+  Out[5] = CombinedTex.Load(int3(1, 1, 0), int2(-1, -1));
+  Out[6] = CombinedTex.Load(int3(0, 0, 0), int2(1, 1));
+}
+
+//--- pipeline.yaml
+---
+Shaders:
+  - Stage: Compute
+    Entry: main
+    DispatchSize: [1, 1, 1]
+
+Buffers:
+  - Name: Tex
+    Format: Float32
+    Channels: 4
+    OutputProps: { Width: 2, Height: 2, Depth: 1 }
+    Data: [ 1.0, 0.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 0.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0 ]
+
+  - Name: Out
+    Format: Float32
+    Channels: 4
+    FillSize: 112
+
+  - Name: Expected
+    Format: Float32
+    Channels: 4
+    Data: [ 1.0, 0.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 0.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 1.0,
+            1.0, 1.0, 1.0, 1.0 ]
+
+Samplers:
+  - Name: Samp
+    MinFilter: Nearest
+    MagFilter: Nearest
+    Address: Clamp
+
+CombinedImageSamplers:
+  - Name: CombinedTex
+    Texture: Tex
+    TextureKind: Texture2D
+    Sampler: Samp
+
+DescriptorSets:
+  - Resources:
+    - Name: CombinedTex
+      Kind: CombinedImageSampler
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 0 }
+    - Name: Out
+      Kind: RWBuffer
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 1 }
+
+Results:
+  - Result: LoadTest
+    Rule: BufferExact
+    Actual: Out
+    Expected: Expected
+...
+#--- end
+
+# Unimplemented: This is a Vulkan specific feature.
+# UNSUPPORTED: !Vulkan
+
+# RUN: split-file %s %t
+# RUN: %dxc_target -T cs_6_0 -Fo %t.o %t/source.hlsl
+# RUN: %offloader %t/pipeline.yaml %t.o

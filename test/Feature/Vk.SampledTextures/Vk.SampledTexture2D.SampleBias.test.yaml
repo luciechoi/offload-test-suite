@@ -1,0 +1,149 @@
+#--- vertex.hlsl
+struct VSInput {
+  float3 Pos : POSITION;
+};
+
+struct VSOutput {
+  float4 Pos : SV_POSITION;
+};
+
+VSOutput mainVS(VSInput input) {
+  VSOutput output;
+  output.Pos = float4(input.Pos, 1.0f);
+  return output;
+}
+
+#--- pixel.hlsl
+[[vk::binding(0, 0)]] vk::SampledTexture2D<float4> CombinedSamp0 : register(s0); // Mag=Nearest, Min=Linear
+[[vk::binding(1, 0)]] vk::SampledTexture2D<float4> CombinedSamp1 : register(s1); // Mag=Linear, Min=Nearest
+[[vk::binding(2, 0)]] RWBuffer<float4> Out : register(u0);
+
+float4 mainPS(float4 Pos : SV_POSITION) : SV_Target {
+  uint2 GTid = (uint2)Pos.xy;
+  float2 sample_uv = 0.5 + float2(GTid.xy) * 0.5;
+
+  float4 r0 = CombinedSamp0.SampleBias(sample_uv, -0.1);
+  float4 r1 = CombinedSamp0.SampleBias(sample_uv, 0.1);
+  float4 r2 = CombinedSamp0.SampleBias(sample_uv, -0.1, int2(-1, -1));
+  float4 r3 = CombinedSamp0.SampleBias(sample_uv, -0.1, int2(0, 0), 0.1);
+  float4 r4 = CombinedSamp1.SampleBias(sample_uv, -0.1);
+  float4 r5 = CombinedSamp0.SampleBias(float2(0.25, 0.25), -0.1);
+
+  if (all(GTid.xy == 0)) {
+    Out[0] = r0;
+    Out[1] = r1;
+    Out[2] = r2;
+    Out[3] = r3;
+    Out[4] = r4;
+    Out[5] = r5;
+  }
+  return float4(0,0,0,0);
+}
+
+#--- pipeline.yaml
+---
+Shaders:
+  - Stage: Vertex
+    Entry: mainVS
+  - Stage: Pixel
+    Entry: mainPS
+
+Buffers:
+  - Name: Tex
+    Format: Float32
+    Channels: 4
+    OutputProps: { Width: 2, Height: 2, Depth: 1, MipLevels: 2 }
+    Data: [ 1.0, 0.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 0.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.5, 0.5, 0.5, 1.0 ]
+
+  - Name: Out
+    Format: Float32
+    Channels: 4
+    FillSize: 96
+
+  - Name: Expected
+    Format: Float32
+    Channels: 4
+    Data: [ 1.0, 1.0, 1.0, 1.0,
+            0.5, 0.5, 0.5, 1.0,
+            1.0, 0.0, 0.0, 1.0,
+            0.5, 0.5, 0.5, 1.0,
+            0.5, 0.5, 0.5, 1.0,
+            1.0, 0.0, 0.0, 1.0 ]
+
+  - Name: RT
+    Format: Float32
+    Channels: 4
+    FillSize: 64
+    OutputProps: { Width: 2, Height: 2, Depth: 1 }
+
+  - Name: VB
+    Format: Float32
+    Channels: 3
+    Data: [-1.0, -1.0, 0.0,
+            3.0, -1.0, 0.0,
+           -1.0,  3.0, 0.0]
+
+Bindings:
+  VertexBuffer: VB
+  VertexAttributes:
+    - Format: Float32
+      Channels: 3
+      Offset: 0
+      Name: POSITION
+  RenderTarget: RT
+
+Samplers:
+  - Name: Samp0
+    MinFilter: Linear
+    MagFilter: Nearest
+    Address: Clamp
+  - Name: Samp1
+    MinFilter: Nearest
+    MagFilter: Linear
+    Address: Clamp
+
+CombinedImageSamplers:
+  - Name: CombinedSamp0
+    Texture: Tex
+    TextureKind: Texture2D
+    Sampler: Samp0
+  - Name: CombinedSamp1
+    Texture: Tex
+    TextureKind: Texture2D
+    Sampler: Samp1
+
+DescriptorSets:
+  - Resources:
+    - Name: CombinedSamp0
+      Kind: CombinedImageSampler
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 0 }
+    - Name: CombinedSamp1
+      Kind: CombinedImageSampler
+      DirectXBinding: { Register: 1, Space: 0 }
+      VulkanBinding: { Binding: 1 }
+    - Name: Out
+      Kind: RWBuffer
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 2 }
+
+Results:
+  - Result: SampleBiasTest
+    Rule: BufferFloatULP
+    Actual: Out
+    Expected: Expected
+    ULPT: 1
+...
+#--- end
+
+# Unimplemented: This is a Vulkan specific feature.
+# UNSUPPORTED: !Vulkan
+
+# RUN: split-file %s %t
+# RUN: %dxc_target -T vs_6_0 -E mainVS -Fo %t-vs.o %t/vertex.hlsl
+# RUN: %dxc_target -T ps_6_0 -E mainPS -Fo %t-ps.o %t/pixel.hlsl
+# RUN: %offloader %t/pipeline.yaml %t-vs.o %t-ps.o

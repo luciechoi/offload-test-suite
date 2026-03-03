@@ -1,0 +1,110 @@
+#--- source.hlsl
+[[vk::binding(0, 0)]] vk::SampledTexture2D<float4> CombinedSampClamp : register(s0);
+[[vk::binding(1, 0)]] vk::SampledTexture2D<float4> CombinedSampRepeat : register(s1);
+[[vk::binding(2, 0)]] RWBuffer<float4> Out : register(u0);
+
+[numthreads(1, 1, 1)]
+void main() {
+  Out[0] = CombinedSampClamp.Gather(float2(0.5, 0.5));
+  Out[1] = CombinedSampClamp.GatherRed(float2(0.5, 0.5));
+  Out[2] = CombinedSampClamp.GatherGreen(float2(0.5, 0.5));
+  Out[3] = CombinedSampClamp.GatherBlue(float2(0.5, 0.5));
+  Out[4] = CombinedSampClamp.GatherAlpha(float2(0.5, 0.5));
+
+  float2 uv_outside = float2(1.5, 1.5);
+  Out[5] = CombinedSampClamp.GatherRed(uv_outside);
+  Out[6] = CombinedSampRepeat.GatherRed(uv_outside);
+  Out[7] = CombinedSampClamp.GatherGreen(uv_outside);
+  Out[8] = CombinedSampRepeat.GatherGreen(uv_outside);
+  Out[9] = CombinedSampClamp.GatherBlue(uv_outside);
+  Out[10] = CombinedSampRepeat.GatherBlue(uv_outside);
+  Out[11] = CombinedSampClamp.GatherAlpha(uv_outside);
+  Out[12] = CombinedSampRepeat.GatherAlpha(uv_outside);
+}
+
+#--- pipeline.yaml
+---
+Shaders:
+  - Stage: Compute
+    Entry: main
+    DispatchSize: [1, 1, 1]
+
+Buffers:
+  - Name: Tex
+    Format: Float32
+    Channels: 4
+    OutputProps: { Width: 2, Height: 2, Depth: 1 }
+    Data: [ 1.0, 0.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 0.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 0.5 ]
+
+  - Name: Out
+    Format: Float32
+    Channels: 4
+    FillSize: 208
+
+  - Name: Expected
+    Format: Float32
+    Channels: 4
+    Data: [ 0.0, 1.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 1.0, 1.0, 0.0,
+            1.0, 1.0, 0.0, 0.0,
+            1.0, 0.5, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.0, 1.0, 1.0, 0.0,
+            1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 0.0, 0.0,
+            0.5, 0.5, 0.5, 0.5,
+            1.0, 0.5, 1.0, 1.0 ]
+
+Samplers:
+  - Name: SampClamp
+    MinFilter: Linear
+    MagFilter: Linear
+    Address: Clamp
+  - Name: SampRepeat
+    Address: Repeat
+
+CombinedImageSamplers:
+  - Name: CombinedSampClamp
+    Texture: Tex
+    TextureKind: Texture2D
+    Sampler: SampClamp
+  - Name: CombinedSampRepeat
+    Texture: Tex
+    TextureKind: Texture2D
+    Sampler: SampRepeat
+
+DescriptorSets:
+  - Resources:
+    - Name: CombinedSampClamp
+      Kind: CombinedImageSampler
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 0 }
+    - Name: CombinedSampRepeat
+      Kind: CombinedImageSampler
+      DirectXBinding: { Register: 1, Space: 0 }
+      VulkanBinding: { Binding: 1 }
+    - Name: Out
+      Kind: RWBuffer
+      DirectXBinding: { Register: 0, Space: 0 }
+      VulkanBinding: { Binding: 2 }
+
+Results:
+  - Result: GatherTest
+    Rule: BufferExact
+    Actual: Out
+    Expected: Expected
+...
+#--- end
+
+# Unimplemented: This is a Vulkan specific feature.
+# UNSUPPORTED: !Vulkan
+
+# RUN: split-file %s %t
+# RUN: %dxc_target -T cs_6_0 -Fo %t.o %t/source.hlsl
+# RUN: %offloader %t/pipeline.yaml %t.o
